@@ -1,6 +1,8 @@
 # Raspberry Pi Photo Slideshow (`pishow`)
 
-A lightweight Python slideshow application built for Raspberry Pi OS. It reads images from `~/photos`, displays them full-screen, scales them dynamically to fit the display, shows filename text overlays, and includes simple keyboard controls.
+A lightweight Python slideshow application built for Raspberry Pi OS. It reads images from `~/photos`, displays them full-screen, scales them dynamically to fit the display, shows filename text overlays, and includes simple keyboard controls. 
+
+It also displays a **live clock (upper-left)** and **current weather (upper-right)** with temperature readings and beautiful, dynamically sized, hand-drawn vector condition icons (Sunny, Cloudy, Rainy, Snowy, etc.).
 
 ---
 
@@ -82,19 +84,42 @@ While the slideshow is running, you can control it with these keys:
 At the top of [pishow.py](file:///c:/Users/gigam/source/repos/antigravity/pishow/pishow.py), you'll find a **CONFIGURATION** section. You can open the file in a text editor (like `nano`) and change these values:
 
 ```python
+# ==========================================
+# CONFIGURATION
+# ==========================================
 PHOTO_DIR = "~/photos"          # Folder containing your images
 DURATION = 30.0                 # How long each photo shows (in seconds)
 SCALING_MODE = "fit"            # Image scaling mode: "fit", "fill", or "stretch"
 SHOW_FILENAME = True            # Set to False to hide the filename overlay
-FONT_SIZE = 24                  # Font size for the text overlay
-FONT_FAMILY = "DejaVu Sans"     # Font style (DejaVu Sans is pre-installed on Pi)
+FONT_SIZE = 24                  # Font size for the filename overlay
+FONT_FAMILY = "DejaVu Sans"     # Font style for filename overlay
 SHUFFLE = False                 # Set to True to randomize slideshow order
+
+# --- CLOCK CONFIGURATION ---
+SHOW_TIME = True                # Toggle live clock (upper-left)
+TIME_FONT_FAMILY = "DejaVu Sans"
+TIME_FONT_SIZE = 48
+TIME_FONT_COLOR = "white"       # Font color (supports words or hex like "#ffffff")
+
+# --- WEATHER CONFIGURATION ---
+SHOW_WEATHER = True             # Toggle weather overlay (upper-right)
+WEATHER_LOCATION = "New York"    # City name (e.g. "Paris") or exact "lat,lon" (e.g. "48.8566,2.3522")
+WEATHER_FONT_FAMILY = "DejaVu Sans"
+WEATHER_FONT_SIZE = 36
+WEATHER_FONT_COLOR = "white"
+WEATHER_UNIT = "fahrenheit"      # "fahrenheit" or "celsius"
+WEATHER_INTERVAL_MINS = 15       # Fetch current weather every 15 minutes
 ```
 
 ### Scaling Modes:
 *   `"fit"` *(Default)*: Scales the image to fit the screen without distortion. If the aspect ratio of the image doesn't match your monitor, black bars will appear on the sides/top.
 *   `"fill"`: Scales the image so that the entire screen is covered, cropping the edges of the image where necessary to preserve aspect ratio.
 *   `"stretch"`: Stretches/squashes the image to exactly match the screen width and height.
+
+### Weather Location:
+You can specify your location using either:
+*   A city name (e.g., `"Chicago"` or `"London"`). The script will automatically query the free Open-Meteo geocoding service at startup to resolve it.
+*   Exact GPS coordinates (e.g., `"41.8781,-87.6298"`). This is the fastest and most reliable option since it skips the geocoding lookup.
 
 ---
 
