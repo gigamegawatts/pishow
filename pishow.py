@@ -20,21 +20,22 @@ SCALING_MODE = "fit"            # Options: "fit" (aspect ratio), "fill" (crop), 
 SHOW_FILENAME = True            # Display filename overlay without extension
 FONT_SIZE = 24                  # Filename text size
 FONT_FAMILY = "DejaVu Sans"     # Filename text font family
-SHUFFLE = False                 # Set to True to randomize slideshow order
+FONT_COLOR = "yellow"            # Filename text color
+SHUFFLE = True                 # Set to True to randomize slideshow order
 
 # --- CLOCK CONFIGURATION ---
 SHOW_TIME = True
 TIME_FONT_FAMILY = "DejaVu Sans"
-TIME_FONT_SIZE = 48
-TIME_FONT_COLOR = "white"
+TIME_FONT_SIZE = 64
+TIME_FONT_COLOR = "red"
 
 # --- WEATHER CONFIGURATION ---
 SHOW_WEATHER = True
-WEATHER_LOCATION = "New York"    # City name (e.g., "Chicago") or "lat,lon" (e.g., "40.7128,-74.0060")
+WEATHER_LOCATION = "Toronto"    # City name (e.g., "Chicago") or "lat,lon" (e.g., "40.7128,-74.0060")
 WEATHER_FONT_FAMILY = "DejaVu Sans"
 WEATHER_FONT_SIZE = 36
-WEATHER_FONT_COLOR = "white"
-WEATHER_UNIT = "fahrenheit"      # Options: "fahrenheit", "celsius"
+WEATHER_FONT_COLOR = "cyan"
+WEATHER_UNIT = "celsius"      # Options: "fahrenheit", "celsius"
 WEATHER_INTERVAL_MINS = 15       # Fetch current weather every 15 minutes
 # ==========================================
 
@@ -147,7 +148,7 @@ class PiSlideshow:
                 
                 # Dropshadow
                 self.canvas.create_text(w // 2 + 2, text_y + 2, text=filename, fill="black", font=font_spec, anchor="center")
-                self.canvas.create_text(w // 2, text_y, text=filename, fill="white", font=font_spec, anchor="center")
+                self.canvas.create_text(w // 2, text_y, text=filename, fill=FONT_COLOR, font=font_spec, anchor="center")
                 
         except Exception as e:
             # Gracefully handle file reading / scaling errors on screen
@@ -221,7 +222,7 @@ class PiSlideshow:
             hour = 12
         time_str = f"{hour}:{now.minute:02d}"
         
-        x, y = 40, 40
+        x, y = 0,0
         font_spec = (TIME_FONT_FAMILY, TIME_FONT_SIZE, "bold")
         
         # Dual text draw for dropshadow contrast
@@ -330,9 +331,31 @@ class PiSlideshow:
             return
             
         icon_size = w // 10
-        margin = 40
+        margin = 0
+        top_margin = 0
+        spacing = 10
         
-        # Position icon in top-right corner
+        # Position temperature text at the top-right
+        text_x = w - margin
+        text_y = top_margin
+        anchor_pos = "ne"
+        
+        # Draw temperature label
+        if self.weather_temp is not None:
+            # Display temperature as an integer without decimal point
+            temp_str = f"{int(round(self.weather_temp))}°{self.weather_unit_symbol}"
+            font_spec = (WEATHER_FONT_FAMILY, WEATHER_FONT_SIZE, "bold")
+            
+            # Dropshadow offset
+            self.canvas.create_text(text_x + 2, text_y + 2, text=temp_str, fill="black", font=font_spec, anchor=anchor_pos, tags="weather")
+            self.canvas.create_text(text_x, text_y, text=temp_str, fill=WEATHER_FONT_COLOR, font=font_spec, anchor=anchor_pos, tags="weather")
+            
+            # Since temperature is drawn, the icon will go below it
+            icon_y_offset = top_margin + WEATHER_FONT_SIZE + spacing
+        else:
+            icon_y_offset = top_margin
+            
+        # Position icon below temperature text, aligned to the right side of the screen
         if self.weather_condition and self.weather_condition != "unknown":
             try:
                 # Generate weather icon dynamically via PIL
@@ -340,32 +363,10 @@ class PiSlideshow:
                 self.current_weather_icon_ref = ImageTk.PhotoImage(icon_img)
                 
                 icon_x = w - margin - icon_size // 2
-                icon_y = margin + icon_size // 2
+                icon_y = icon_y_offset + icon_size // 2
                 self.canvas.create_image(icon_x, icon_y, image=self.current_weather_icon_ref, anchor="center", tags="weather")
-                
-                # Temperature text positioning (offset to the left of the icon)
-                text_x = w - margin - icon_size - 20
-                text_y = margin + icon_size // 2
-                anchor_pos = "e"
             except Exception as e:
                 print(f"Error drawing icon: {e}", file=sys.stderr)
-                text_x = w - margin
-                text_y = margin
-                anchor_pos = "ne"
-        else:
-            # Fallback alignment if no icon is loaded
-            text_x = w - margin
-            text_y = margin
-            anchor_pos = "ne"
-            
-        # Draw temperature label
-        if self.weather_temp is not None:
-            temp_str = f"{self.weather_temp:.1f}°{self.weather_unit_symbol}"
-            font_spec = (WEATHER_FONT_FAMILY, WEATHER_FONT_SIZE, "bold")
-            
-            # Dropshadow offset
-            self.canvas.create_text(text_x + 2, text_y + 2, text=temp_str, fill="black", font=font_spec, anchor=anchor_pos, tags="weather")
-            self.canvas.create_text(text_x, text_y, text=temp_str, fill=WEATHER_FONT_COLOR, font=font_spec, anchor=anchor_pos, tags="weather")
 
     def create_weather_icon(self, condition, size):
         """Generates a high-quality vector weather icon onto a transparent image."""
@@ -512,9 +513,10 @@ class PiSlideshow:
             self.timer_id = self.root.after(int(DURATION * 1000), self.show_next)
             
     def draw_pause_indicator(self, screen_w):
-        """Draws visual pause indicator in the top right."""
+        """Draws visual pause indicator in the bottom right."""
+        w, h = self.get_dimensions()
         font_spec = (FONT_FAMILY, 14, "bold")
-        self.canvas.create_text(screen_w - 40, 40, text="PAUSED", fill="#ff3333", font=font_spec, tags="pause_indicator", anchor="e")
+        self.canvas.create_text(w - 15, h - 15, text="PAUSED", fill="#ff3333", font=font_spec, tags="pause_indicator", anchor="se")
         
     def toggle_pause(self):
         """Pauses/resumes the slideshow transitions."""
