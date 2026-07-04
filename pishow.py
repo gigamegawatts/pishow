@@ -2,6 +2,7 @@
 import os
 import sys
 import random
+import time
 import tkinter as tk
 import urllib.request
 import urllib.parse
@@ -11,33 +12,181 @@ import math
 from datetime import datetime
 from PIL import Image, ImageTk, ImageOps, ImageDraw
 
+# Try importing fcntl for direct I2C (standard on Linux)
+FCNTL_AVAILABLE = False
+try:
+    import fcntl
+    FCNTL_AVAILABLE = True
+except ImportError:
+    pass
+
+# Try importing smbus2
+SMBUS2_AVAILABLE = False
+try:
+    import smbus2
+    SMBUS2_AVAILABLE = True
+except ImportError:
+    pass
+
+# Try importing smbus
+SMBUS_AVAILABLE = False
+try:
+    import smbus
+    SMBUS_AVAILABLE = True
+except ImportError:
+    pass
+
 # ==========================================
 # CONFIGURATION
 # ==========================================
+
+# --- GENERAL CONFIGURATION ---
+OUTLINE_WIDTH = 2               # Width of the black outline in pixels (0 to disable)
+
+# --- SLIDESHOW CONFIGURATION ---
 PHOTO_DIR = "~/photos"          # Directory containing images
 DURATION = 30.0                 # Slideshow timer per image (seconds)
 SCALING_MODE = "fit"            # Options: "fit" (aspect ratio), "fill" (crop), "stretch" (distort)
 SHOW_FILENAME = True            # Display filename overlay without extension
 FONT_SIZE = 24                  # Filename text size
 FONT_FAMILY = "DejaVu Sans"     # Filename text font family
-FONT_COLOR = "yellow"            # Filename text color
+FONT_COLOR = "white"            # Filename text color
 SHUFFLE = True                 # Set to True to randomize slideshow order
 
 # --- CLOCK CONFIGURATION ---
 SHOW_TIME = True
 TIME_FONT_FAMILY = "DejaVu Sans"
 TIME_FONT_SIZE = 64
-TIME_FONT_COLOR = "red"
+TIME_FONT_COLOR = "white"
 
 # --- WEATHER CONFIGURATION ---
 SHOW_WEATHER = True
 WEATHER_LOCATION = "Toronto"    # City name (e.g., "Chicago") or "lat,lon" (e.g., "40.7128,-74.0060")
 WEATHER_FONT_FAMILY = "DejaVu Sans"
 WEATHER_FONT_SIZE = 36
-WEATHER_FONT_COLOR = "cyan"
+WEATHER_FONT_COLOR = "white"
 WEATHER_UNIT = "celsius"      # Options: "fahrenheit", "celsius"
 WEATHER_INTERVAL_MINS = 15       # Fetch current weather every 15 minutes
+
+# --- SHT30 CONFIGURATION ---
+SHOW_SHT30 = True               # Enable/disable SHT30 sensor display
+SHT30_I2C_ADDRESS = 0x45        # SHT30 I2C address (usually 0x44 or 0x45)
+SHT30_I2C_BUS = 1               # I2C bus number
+SHT30_TEMP_UNIT = "celsius"   # Options: "celsius", "fahrenheit"
+SHT30_FONT_FAMILY = "DejaVu Sans"
+SHT30_FONT_SIZE = 36
+SHT30_FONT_COLOR = "cyan"
+SHT30_INTERVAL_SECS = 10        # Read the sensor every 10 seconds
 # ==========================================
+
+# Constants for SHT30 I2C
+I2C_SLAVE = 0x0703
+CMD_MEAS_HIGH_REP = bytes([0x24, 0x00])
+
+def crc8(data: bytes) -> int:
+    """Calculates SHT3x CRC-8 checksum."""
+    crc = 0xFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = (crc << 1) ^ 0x31
+            else:
+                crc <<= 1
+            crc &= 0xFF
+    return crc
+
+class SHT30Reader:
+    def __init__(self, bus_num=1, address=0x44):
+        self.bus_num = bus_num
+        self.address = address
+        self.fd = None
+        self.bus = None
+        self.method_used = None
+        self._connect()
+
+    def _connect(self):
+        errors = []
+        if FCNTL_AVAILABLE:
+            dev_path = f"/dev/i2c-{self.bus_num}"
+            try:
+                self.fd = os.open(dev_path, os.O_RDWR)
+                fcntl.ioctl(self.fd, I2C_SLAVE, self.address)
+                self.method_used = "fcntl"
+                return
+            except Exception as e:
+                errors.append(f"fcntl: {e}")
+        if SMBUS2_AVAILABLE:
+            try:
+                self.bus = smbus2.SMBus(self.bus_num)
+                self.method_used = "smbus2"
+                return
+            except Exception as e:
+                errors.append(f"smbus2: {e}")
+        if SMBUS_AVAILABLE:
+            try:
+                self.bus = smbus.SMBus(self.bus_num)
+                self.method_used = "smbus"
+                return
+            except Exception as e:
+                errors.append(f"smbus: {e}")
+        raise RuntimeError(f"SHT30 init failed. Errors: {errors}")
+
+    def read(self):
+        if self.fd is not None:
+            try:
+                os.write(self.fd, CMD_MEAS_HIGH_REP)
+                time.sleep(0.05)
+                data = os.read(self.fd, 6)
+            except Exception as e:
+                raise RuntimeError(f"Raw I2C write/read failed: {e}")
+        elif self.bus is not None:
+            try:
+                if self.method_used == "smbus2":
+                    write_msg = smbus2.i2c_msg.write(self.address, list(CMD_MEAS_HIGH_REP))
+                    self.bus.i2c_rdwr(write_msg)
+                    time.sleep(0.05)
+                    read_msg = smbus2.i2c_msg.read(self.address, 6)
+                    self.bus.i2c_rdwr(read_msg)
+                    data = bytes(list(read_msg))
+                else:
+                    self.bus.write_i2c_block_data(self.address, CMD_MEAS_HIGH_REP[0], [CMD_MEAS_HIGH_REP[1]])
+                    time.sleep(0.05)
+                    data = bytes(self.bus.read_i2c_block_data(self.address, 0x00, 6))
+            except Exception as e:
+                raise RuntimeError(f"SMBus read failed: {e}")
+        else:
+            raise RuntimeError("Not connected.")
+
+        if len(data) < 6:
+            raise RuntimeError(f"Incomplete SHT30 data: read {len(data)} bytes, expected 6.")
+
+        if crc8(data[0:2]) != data[2] or crc8(data[3:5]) != data[5]:
+            raise ValueError("SHT30 CRC verification failed.")
+
+        raw_temp = (data[0] << 8) | data[1]
+        raw_humi = (data[3] << 8) | data[4]
+
+        temp_c = -45.0 + 175.0 * (raw_temp / 65535.0)
+        humidity = 100.0 * (raw_humi / 65535.0)
+        humidity = max(0.0, min(100.0, humidity))
+
+        return temp_c, humidity
+
+    def close(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except Exception:
+                pass
+            self.fd = None
+        if self.bus is not None:
+            try:
+                self.bus.close()
+            except Exception:
+                pass
+            self.bus = None
+
 
 class PiSlideshow:
     def __init__(self, root):
@@ -84,6 +233,12 @@ class PiSlideshow:
         # Dynamically redraw image when layout changes (e.g. screen resolution changes)
         self.root.bind("<Configure>", self.on_resize)
         
+        # SHT30 sensor state
+        self.sht30_temp = None
+        self.sht30_humi = None
+        self.sht30_loaded = False
+        self.sht30_sensor = None
+
         # Start scanning directory and slideshow loop
         self.load_photos()
         self.show_next()
@@ -91,6 +246,8 @@ class PiSlideshow:
         # Start overlay update loops
         self.start_clock_updates()
         self.start_weather_updates()
+        if SHOW_SHT30:
+            self.start_sht30_updates()
         
     def load_photos(self):
         """Scans the directory for valid image files."""
@@ -123,6 +280,18 @@ class PiSlideshow:
         if 0 <= self.current_index < len(self.files):
             self.display_photo(self.files[self.current_index])
             
+    def create_text_with_outline(self, x, y, **kwargs):
+        """Draws text on the canvas with a black outline of configurable width."""
+        if OUTLINE_WIDTH > 0:
+            outline_kwargs = kwargs.copy()
+            outline_kwargs["fill"] = "black"
+            for dx in range(-OUTLINE_WIDTH, OUTLINE_WIDTH + 1):
+                for dy in range(-OUTLINE_WIDTH, OUTLINE_WIDTH + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    self.canvas.create_text(x + dx, y + dy, **outline_kwargs)
+        return self.canvas.create_text(x, y, **kwargs)
+
     def display_photo(self, filepath):
         """Loads, scales, and displays a single image along with all overlays."""
         self.canvas.delete("all")
@@ -146,14 +315,12 @@ class PiSlideshow:
                 font_spec = (FONT_FAMILY, FONT_SIZE, "bold")
                 text_y = h - 60
                 
-                # Dropshadow
-                self.canvas.create_text(w // 2 + 2, text_y + 2, text=filename, fill="black", font=font_spec, anchor="center")
-                self.canvas.create_text(w // 2, text_y, text=filename, fill=FONT_COLOR, font=font_spec, anchor="center")
+                self.create_text_with_outline(w // 2, text_y, text=filename, fill=FONT_COLOR, font=font_spec, anchor="center")
                 
         except Exception as e:
             # Gracefully handle file reading / scaling errors on screen
             err_msg = f"Error loading image:\n{os.path.basename(filepath)}\n{str(e)}"
-            self.canvas.create_text(w // 2, h // 2, text=err_msg, fill="red", font=(FONT_FAMILY, 20), justify="center")
+            self.create_text_with_outline(w // 2, h // 2, text=err_msg, fill="red", font=(FONT_FAMILY, 20), justify="center", anchor="center")
             
         # Draw pause overlay if active
         if self.paused:
@@ -164,6 +331,8 @@ class PiSlideshow:
             self.draw_clock(w, h)
         if SHOW_WEATHER:
             self.draw_weather(w, h)
+        if SHOW_SHT30:
+            self.draw_sht30(w, h)
             
     def scale_image(self, img, target_w, target_h, mode):
         """Resizes the image according to chosen configuration."""
@@ -225,9 +394,77 @@ class PiSlideshow:
         x, y = 0,0
         font_spec = (TIME_FONT_FAMILY, TIME_FONT_SIZE, "bold")
         
-        # Dual text draw for dropshadow contrast
-        self.canvas.create_text(x + 2, y + 2, text=time_str, fill="black", font=font_spec, anchor="nw", tags="clock")
-        self.canvas.create_text(x, y, text=time_str, fill=TIME_FONT_COLOR, font=font_spec, anchor="nw", tags="clock")
+        self.create_text_with_outline(x, y, text=time_str, fill=TIME_FONT_COLOR, font=font_spec, anchor="nw", tags="clock")
+
+    # ==========================================
+    # SHT30 OVERLAY LOGIC
+    # ==========================================
+    def start_sht30_updates(self):
+        """Kicks off SHT30 sensor update loop."""
+        if not SHOW_SHT30:
+            return
+        threading.Thread(target=self._fetch_sht30_thread, daemon=True).start()
+        self.root.after(int(SHT30_INTERVAL_SECS * 1000), self.start_sht30_updates)
+
+    def _fetch_sht30_thread(self):
+        """Runs in background thread to read SHT30 sensor values."""
+        try:
+            if self.sht30_sensor is None:
+                self.sht30_sensor = SHT30Reader(bus_num=SHT30_I2C_BUS, address=SHT30_I2C_ADDRESS)
+            temp_c, humidity = self.sht30_sensor.read()
+            self.root.after(0, self._apply_sht30, temp_c, humidity)
+        except Exception as e:
+            print(f"SHT30 sensor read error: {e}", file=sys.stderr)
+
+    def _apply_sht30(self, temp_c, humidity):
+        """Updates SHT30 values and redraws the display."""
+        self.sht30_temp = temp_c
+        self.sht30_humi = humidity
+        self.sht30_loaded = True
+        w, h = self.get_dimensions()
+        self.draw_sht30(w, h)
+
+    def draw_sht30(self, w, h):
+        """Draws the SHT30 temperature and humidity below the clock."""
+        self.canvas.delete("sht30")
+        if not self.sht30_loaded or not SHOW_SHT30:
+            return
+
+        y_offset = 0
+        if SHOW_TIME:
+            y_offset += TIME_FONT_SIZE + 50
+
+        font_spec = (SHT30_FONT_FAMILY, SHT30_FONT_SIZE, "bold")
+
+        # Format Temperature
+        if SHT30_TEMP_UNIT.lower() == "fahrenheit":
+            temp_val = self.sht30_temp * 9.0 / 5.0 + 32.0
+            temp_str = f"{temp_val:.1f}F"
+        else:
+            temp_str = f"{self.sht30_temp:.1f}C"
+
+        # Format Humidity
+        humi_str = f"{int(round(self.sht30_humi))}%"
+
+        # Draw Temperature
+        self.create_text_with_outline(
+            0, y_offset,
+            text=temp_str,
+            fill=SHT30_FONT_COLOR,
+            font=font_spec,
+            anchor="nw",
+            tags="sht30"
+        )
+
+        # Draw Humidity
+        self.create_text_with_outline(
+            0, y_offset + SHT30_FONT_SIZE + 10,
+            text=humi_str,
+            fill=SHT30_FONT_COLOR,
+            font=font_spec,
+            anchor="nw",
+            tags="sht30"
+        )
 
     # ==========================================
     # WEATHER OVERLAY LOGIC
@@ -274,7 +511,7 @@ class PiSlideshow:
         # Call geocoding API
         url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(location)}&count=1&format=json"
         req = urllib.request.Request(url, headers={'User-Agent': 'PiSlideshow'})
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode())
             if not data.get("results"):
                 raise ValueError(f"Location not found: {location}")
@@ -286,7 +523,7 @@ class PiSlideshow:
         unit_str = "fahrenheit" if WEATHER_UNIT.lower() == "fahrenheit" else "celsius"
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&temperature_unit={unit_str}"
         req = urllib.request.Request(url, headers={'User-Agent': 'PiSlideshow'})
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode())
             current = data["current"]
             temp = float(current["temperature_2m"])
@@ -346,9 +583,7 @@ class PiSlideshow:
             temp_str = f"{int(round(self.weather_temp))}°{self.weather_unit_symbol}"
             font_spec = (WEATHER_FONT_FAMILY, WEATHER_FONT_SIZE, "bold")
             
-            # Dropshadow offset
-            self.canvas.create_text(text_x + 2, text_y + 2, text=temp_str, fill="black", font=font_spec, anchor=anchor_pos, tags="weather")
-            self.canvas.create_text(text_x, text_y, text=temp_str, fill=WEATHER_FONT_COLOR, font=font_spec, anchor=anchor_pos, tags="weather")
+            self.create_text_with_outline(text_x, text_y, text=temp_str, fill=WEATHER_FONT_COLOR, font=font_spec, anchor=anchor_pos, tags="weather")
             
             # Since temperature is drawn, the icon will go below it
             icon_y_offset = top_margin + WEATHER_FONT_SIZE + spacing
@@ -482,7 +717,7 @@ class PiSlideshow:
                 self.canvas.delete("all")
                 w, h = self.get_dimensions()
                 msg = f"No images found in:\n{self.photo_dir}\n\nAdd .jpg files and the slideshow will start."
-                self.canvas.create_text(w // 2, h // 2, text=msg, fill="yellow", font=(FONT_FAMILY, 20), justify="center")
+                self.create_text_with_outline(w // 2, h // 2, text=msg, fill="yellow", font=(FONT_FAMILY, 20), justify="center", anchor="center")
                 self.timer_id = self.root.after(5000, self.show_next)
                 return
                 
@@ -516,7 +751,7 @@ class PiSlideshow:
         """Draws visual pause indicator in the bottom right."""
         w, h = self.get_dimensions()
         font_spec = (FONT_FAMILY, 14, "bold")
-        self.canvas.create_text(w - 15, h - 15, text="PAUSED", fill="#ff3333", font=font_spec, tags="pause_indicator", anchor="se")
+        self.create_text_with_outline(w - 15, h - 15, text="PAUSED", fill="#ff3333", font=font_spec, anchor="se", tags="pause_indicator")
         
     def toggle_pause(self):
         """Pauses/resumes the slideshow transitions."""

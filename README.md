@@ -2,7 +2,7 @@
 
 A lightweight Python slideshow application built for Raspberry Pi OS. It reads images from `~/photos`, displays them full-screen, scales them dynamically to fit the display, shows filename text overlays, and includes simple keyboard controls. 
 
-It also displays a **live clock (upper-left)** and **current weather (upper-right)** with temperature readings and beautiful, dynamically sized, hand-drawn vector condition icons (Sunny, Cloudy, Rainy, Snowy, etc.).
+It also displays a **live clock (upper-left)**, **current weather (upper-right)** with condition-based vector icons, and **local environmental readings (upper-left, below clock)** from an I2C-connected SHT30 temperature and humidity sensor.
 
 ---
 
@@ -87,28 +87,43 @@ At the top of [pishow.py](file:///c:/Users/gigam/source/repos/antigravity/pishow
 # ==========================================
 # CONFIGURATION
 # ==========================================
+# --- GENERAL CONFIGURATION ---
+OUTLINE_WIDTH = 2               # Width of the black outline in pixels (0 to disable)
+
+# --- SLIDESHOW CONFIGURATION ---
 PHOTO_DIR = "~/photos"          # Folder containing your images
 DURATION = 30.0                 # How long each photo shows (in seconds)
 SCALING_MODE = "fit"            # Image scaling mode: "fit", "fill", or "stretch"
 SHOW_FILENAME = True            # Set to False to hide the filename overlay
 FONT_SIZE = 24                  # Font size for the filename overlay
 FONT_FAMILY = "DejaVu Sans"     # Font style for filename overlay
-SHUFFLE = False                 # Set to True to randomize slideshow order
+FONT_COLOR = "white"            # Filename text color
+SHUFFLE = True                 # Set to True to randomize slideshow order
 
 # --- CLOCK CONFIGURATION ---
 SHOW_TIME = True                # Toggle live clock (upper-left)
 TIME_FONT_FAMILY = "DejaVu Sans"
-TIME_FONT_SIZE = 48
+TIME_FONT_SIZE = 64
 TIME_FONT_COLOR = "white"       # Font color (supports words or hex like "#ffffff")
 
 # --- WEATHER CONFIGURATION ---
 SHOW_WEATHER = True             # Toggle weather overlay (upper-right)
-WEATHER_LOCATION = "New York"    # City name (e.g. "Paris") or exact "lat,lon" (e.g. "48.8566,2.3522")
+WEATHER_LOCATION = "Toronto"    # City name (e.g. "Paris") or exact "lat,lon" (e.g. "48.8566,2.3522")
 WEATHER_FONT_FAMILY = "DejaVu Sans"
 WEATHER_FONT_SIZE = 36
 WEATHER_FONT_COLOR = "white"
-WEATHER_UNIT = "fahrenheit"      # "fahrenheit" or "celsius"
+WEATHER_UNIT = "celsius"        # "fahrenheit" or "celsius"
 WEATHER_INTERVAL_MINS = 15       # Fetch current weather every 15 minutes
+
+# --- SHT30 CONFIGURATION ---
+SHOW_SHT30 = True               # Enable/disable SHT30 sensor display
+SHT30_I2C_ADDRESS = 0x45        # SHT30 I2C address (usually 0x44 or 0x45)
+SHT30_I2C_BUS = 1               # I2C bus number
+SHT30_TEMP_UNIT = "celsius"     # Options: "celsius", "fahrenheit"
+SHT30_FONT_FAMILY = "DejaVu Sans"
+SHT30_FONT_SIZE = 36
+SHT30_FONT_COLOR = "cyan"
+SHT30_INTERVAL_SECS = 10        # Read the sensor every 10 seconds
 ```
 
 ### Scaling Modes:
@@ -120,6 +135,14 @@ WEATHER_INTERVAL_MINS = 15       # Fetch current weather every 15 minutes
 You can specify your location using either:
 *   A city name (e.g., `"Chicago"` or `"London"`). The script will automatically query the free Open-Meteo geocoding service at startup to resolve it.
 *   Exact GPS coordinates (e.g., `"41.8781,-87.6298"`). This is the fastest and most reliable option since it skips the geocoding lookup.
+
+### SHT30 Sensor Integration:
+If you have connected an I2C-based SHT30 sensor, you can enable local temperature and humidity measurements:
+*   `SHOW_SHT30`: Set to `True` to display readings on-screen below the clock, or `False` to hide them.
+*   `SHT30_I2C_ADDRESS`: The I2C address of your sensor (usually `0x44` or `0x45`).
+*   `SHT30_I2C_BUS`: The I2C bus index (usually `1` for Raspberry Pi).
+*   `SHT30_TEMP_UNIT`: Temperature unit of measure, either `"celsius"` or `"fahrenheit"`.
+*   `SHT30_FONT_SIZE`, `SHT30_FONT_FAMILY`, `SHT30_FONT_COLOR`: Shared typography and style settings applied to both SHT30 metric labels.
 
 ---
 
