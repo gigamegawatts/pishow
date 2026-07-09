@@ -266,6 +266,73 @@ class PiSlideshow:
         else:
             self.files.sort()
 
+    def check_and_update_photos(self):
+        """Scans the photo directory, synchronizing self.files with disk.
+        Returns True if the current photo was deleted, False otherwise.
+        """
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.webp')
+        if not os.path.exists(self.photo_dir):
+            if self.files:
+                self.files = []
+                self.current_index = -1
+            return False
+
+        try:
+            disk_files = []
+            for entry in os.scandir(self.photo_dir):
+                if entry.is_file() and entry.name.lower().endswith(valid_extensions):
+                    disk_files.append(entry.path)
+        except Exception as e:
+            print(f"Error scanning directory {self.photo_dir}: {e}", file=sys.stderr)
+            return False
+
+        disk_set = set(disk_files)
+        current_set = set(self.files)
+
+        if disk_set == current_set:
+            return False
+
+        # Find current file path before modification
+        current_file = None
+        if 0 <= self.current_index < len(self.files):
+            current_file = self.files[self.current_index]
+
+        deleted = current_set - disk_set
+        added = disk_set - current_set
+
+        # Remove deleted files
+        if deleted:
+            self.files = [f for f in self.files if f in disk_set]
+
+        # Add new files
+        if added:
+            if SHUFFLE:
+                # Insert added files at random positions
+                for f in added:
+                    insert_idx = random.randint(0, len(self.files))
+                    self.files.insert(insert_idx, f)
+            else:
+                self.files.extend(added)
+                self.files.sort()
+
+        # Update current_index to match the same current_file if it still exists
+        current_deleted = False
+        if current_file:
+            if current_file in self.files:
+                self.current_index = self.files.index(current_file)
+            else:
+                current_deleted = True
+                if not self.files:
+                    self.current_index = -1
+                else:
+                    self.current_index = self.current_index % len(self.files)
+        else:
+            # If current_index was invalid (e.g. -1 because files was empty, but now we have files)
+            if self.files and self.current_index < 0:
+                self.current_index = -1
+
+        return current_deleted
+
     def get_dimensions(self):
         """Helper to get actual screen/window dimensions."""
         w = self.root.winfo_width()
@@ -711,17 +778,19 @@ class PiSlideshow:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
             
+        current_deleted = self.check_and_update_photos()
+        
         if not self.files:
-            self.load_photos()
-            if not self.files:
-                self.canvas.delete("all")
-                w, h = self.get_dimensions()
-                msg = f"No images found in:\n{self.photo_dir}\n\nAdd .jpg files and the slideshow will start."
-                self.create_text_with_outline(w // 2, h // 2, text=msg, fill="yellow", font=(FONT_FAMILY, 20), justify="center", anchor="center")
-                self.timer_id = self.root.after(5000, self.show_next)
-                return
-                
-        self.current_index = (self.current_index + 1) % len(self.files)
+            self.canvas.delete("all")
+            w, h = self.get_dimensions()
+            msg = f"No images found in:\n{self.photo_dir}\n\nAdd .jpg files and the slideshow will start."
+            self.create_text_with_outline(w // 2, h // 2, text=msg, fill="yellow", font=(FONT_FAMILY, 20), justify="center", anchor="center")
+            self.timer_id = self.root.after(5000, self.show_next)
+            return
+            
+        if not current_deleted:
+            self.current_index = (self.current_index + 1) % len(self.files)
+            
         self.display_photo(self.files[self.current_index])
         
         if not self.paused:
@@ -737,6 +806,8 @@ class PiSlideshow:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
             
+        self.check_and_update_photos()
+        
         if not self.files:
             self.show_next()
             return
